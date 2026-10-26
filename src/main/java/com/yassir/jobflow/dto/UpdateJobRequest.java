@@ -8,13 +8,24 @@ import jakarta.validation.constraints.Size;
 public class UpdateJobRequest {
 
     @NotBlank(message = "Job title is required")
+    @Size(
+        max = 255,
+        message = "Job title must not exceed 255 characters"
+    )
     private String title;
 
     @NotBlank(message = "Job description is required")
-    @Size(max = 5000, message = "Description must not exceed 5000 characters")
+    @Size(
+        max = 5000,
+        message = "Description must not exceed 5000 characters"
+    )
     private String description;
 
     @NotBlank(message = "Job location is required")
+    @Size(
+        max = 255,
+        message = "Job location must not exceed 255 characters"
+    )
     private String location;
 
     @NotNull(message = "Employment type is required")

@@ -422,6 +422,114 @@ void adminCompanyUpdateRejectsJavascriptWebsite() throws Exception {
                     .value("Website must be an HTTP or HTTPS URL"));
 }
 
+@Test
+void adminCompanyUpdateRejectsNameLongerThan255Characters()
+        throws Exception {
+
+    Fixture fixture = createFixture();
+    String oversizedName = "a".repeat(256);
+
+    String requestBody = """
+            {
+              "name": "%s",
+              "description": "Valid description",
+              "website": "https://example.com",
+              "location": "Remote"
+            }
+            """.formatted(oversizedName);
+
+    mockMvc.perform(put(
+                    "/api/admin/companies/{companyId}",
+                    fixture.company().getId())
+                    .with(jwtFor(fixture.admin()))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.name")
+                    .value("Company name must not exceed 255 characters"));
+}
+
+@Test
+void adminCompanyUpdateRejectsLocationLongerThan255Characters()
+        throws Exception {
+
+    Fixture fixture = createFixture();
+    String oversizedLocation = "a".repeat(256);
+
+    String requestBody = """
+            {
+              "name": "Updated company",
+              "description": "Valid description",
+              "website": "https://example.com",
+              "location": "%s"
+            }
+            """.formatted(oversizedLocation);
+
+    mockMvc.perform(put(
+                    "/api/admin/companies/{companyId}",
+                    fixture.company().getId())
+                    .with(jwtFor(fixture.admin()))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.location")
+                    .value("Location must not exceed 255 characters"));
+}
+
+@Test
+void adminJobUpdateRejectsTitleLongerThan255Characters()
+        throws Exception {
+
+    Fixture fixture = createFixture();
+    String oversizedTitle = "a".repeat(256);
+
+    String requestBody = """
+            {
+              "title": "%s",
+              "description": "Valid description",
+              "location": "Remote",
+              "employmentType": "FULL_TIME"
+            }
+            """.formatted(oversizedTitle);
+
+    mockMvc.perform(put(
+                    "/api/admin/jobs/{jobId}",
+                    fixture.job().getId())
+                    .with(jwtFor(fixture.admin()))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.title")
+                    .value("Job title must not exceed 255 characters"));
+}
+
+@Test
+void adminJobUpdateRejectsLocationLongerThan255Characters()
+        throws Exception {
+
+    Fixture fixture = createFixture();
+    String oversizedLocation = "a".repeat(256);
+
+    String requestBody = """
+            {
+              "title": "Updated job",
+              "description": "Valid description",
+              "location": "%s",
+              "employmentType": "FULL_TIME"
+            }
+            """.formatted(oversizedLocation);
+
+    mockMvc.perform(put(
+                    "/api/admin/jobs/{jobId}",
+                    fixture.job().getId())
+                    .with(jwtFor(fixture.admin()))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.location")
+                    .value("Job location must not exceed 255 characters"));
+}
+
     private Fixture createFixture() {
         User admin = saveUser(Role.ADMIN, true);
         User candidate = saveUser(Role.CANDIDATE, true);
