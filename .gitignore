@@ -64,3 +64,5 @@ Thumbs.db
 *.dump
 *.backup
 *.bak
+
+/ADMIN_AUDIT_REPORT.md
