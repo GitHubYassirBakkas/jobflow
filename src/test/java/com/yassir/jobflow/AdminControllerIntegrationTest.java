@@ -31,9 +31,12 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
-
+import com.yassir.jobflow.entity.CandidateProfile;
 import java.time.LocalDateTime;
 import java.util.UUID;
+import org.springframework.http.HttpHeaders;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasItem;
@@ -44,6 +47,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import org.springframework.test.web.servlet.ResultMatcher;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -553,6 +558,507 @@ void adminJobUpdateRejectsLocationLongerThan255Characters()
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.location")
                     .value("Job location must not exceed 255 characters"));
+}
+
+@Test
+void everyAdminEndpointRejectsUnauthenticatedAndNonAdminUsers()
+        throws Exception {
+
+    Fixture fixture = createFixture();
+
+    assertAdminEndpointsDenied(
+            fixture,
+            null,
+            status().isUnauthorized()
+    );
+
+    assertAdminEndpointsDenied(
+            fixture,
+            jwtFor(fixture.candidate()),
+            status().isForbidden()
+    );
+
+    assertAdminEndpointsDenied(
+            fixture,
+            jwtFor(fixture.recruiter()),
+            status().isForbidden()
+    );
+}
+
+private void assertAdminEndpointsDenied(
+        Fixture fixture,
+        RequestPostProcessor authentication,
+        ResultMatcher expectedStatus
+) throws Exception {
+
+    expectAdminEndpointDenied(
+            get("/api/admin/dashboard"),
+            authentication,
+            expectedStatus
+    );
+
+    expectAdminEndpointDenied(
+            get("/api/admin/users"),
+            authentication,
+            expectedStatus
+    );
+
+    expectAdminEndpointDenied(
+            patch(
+                    "/api/admin/users/{userId}/enabled",
+                    fixture.candidate().getId()
+            ).param("enabled", "false"),
+            authentication,
+            expectedStatus
+    );
+
+    expectAdminEndpointDenied(
+            get("/api/admin/companies"),
+            authentication,
+            expectedStatus
+    );
+
+    expectAdminEndpointDenied(
+            put(
+                    "/api/admin/companies/{companyId}",
+                    fixture.company().getId()
+            )
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(companyJson()),
+            authentication,
+            expectedStatus
+    );
+
+    expectAdminEndpointDenied(
+            get("/api/admin/jobs"),
+            authentication,
+            expectedStatus
+    );
+
+    expectAdminEndpointDenied(
+            patch(
+                    "/api/admin/jobs/{jobId}/active",
+                    fixture.job().getId()
+            ).param("active", "false"),
+            authentication,
+            expectedStatus
+    );
+
+    expectAdminEndpointDenied(
+            put(
+                    "/api/admin/jobs/{jobId}",
+                    fixture.job().getId()
+            )
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""
+                            {
+                              "title": "Updated test job",
+                              "description": "Valid description",
+                              "location": "Remote",
+                              "employmentType": "FULL_TIME"
+                            }
+                            """),
+            authentication,
+            expectedStatus
+    );
+
+    expectAdminEndpointDenied(
+            get(
+                    "/api/admin/candidates/{userId}",
+                    fixture.candidate().getId()
+            ),
+            authentication,
+            expectedStatus
+    );
+
+    expectAdminEndpointDenied(
+            get(
+                    "/api/admin/candidates/{userId}/cv",
+                    fixture.candidate().getId()
+            ),
+            authentication,
+            expectedStatus
+    );
+
+    expectAdminEndpointDenied(
+            get("/api/admin/applications"),
+            authentication,
+            expectedStatus
+    );
+
+    expectAdminEndpointDenied(
+            patch(
+                    "/api/admin/applications/{applicationId}/status",
+                    fixture.application().getId()
+            ).param("status", "APPLIED"),
+            authentication,
+            expectedStatus
+    );
+
+    expectAdminEndpointDenied(
+            get(
+                    "/api/admin/applications/{applicationId}/cv",
+                    fixture.application().getId()
+            ),
+            authentication,
+            expectedStatus
+    );
+
+    expectAdminEndpointDenied(
+            get("/api/admin/interviews"),
+            authentication,
+            expectedStatus
+    );
+
+    expectAdminEndpointDenied(
+            patch(
+                    "/api/admin/interviews/{interviewId}/status",
+                    fixture.interview().getId()
+            ).param("status", "SCHEDULED"),
+            authentication,
+            expectedStatus
+    );
+}
+
+private void expectAdminEndpointDenied(
+        MockHttpServletRequestBuilder request,
+        RequestPostProcessor authentication,
+        ResultMatcher expectedStatus
+) throws Exception {
+
+    if (authentication != null) {
+        request.with(authentication);
+    }
+
+    mockMvc.perform(request)
+            .andExpect(expectedStatus);
+}
+
+@Test
+void adminCanUpdateCompanyWithValidData() throws Exception {
+    Fixture fixture = createFixture();
+
+    String requestBody = """
+            {
+              "name": "Updated OpenTech",
+              "description": "Updated company description",
+              "website": "https://updated.example.com/careers",
+              "location": "Casablanca"
+            }
+            """;
+
+    mockMvc.perform(put(
+                    "/api/admin/companies/{companyId}",
+                    fixture.company().getId())
+                    .with(jwtFor(fixture.admin()))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.name").value("Updated OpenTech"))
+            .andExpect(jsonPath("$.description")
+                    .value("Updated company description"))
+            .andExpect(jsonPath("$.website")
+                    .value("https://updated.example.com/careers"))
+            .andExpect(jsonPath("$.location").value("Casablanca"));
+
+    Company updatedCompany = companyRepository
+            .findById(fixture.company().getId())
+            .orElseThrow();
+
+    assertThat(updatedCompany.getName()).isEqualTo("Updated OpenTech");
+    assertThat(updatedCompany.getDescription())
+            .isEqualTo("Updated company description");
+    assertThat(updatedCompany.getWebsite())
+            .isEqualTo("https://updated.example.com/careers");
+    assertThat(updatedCompany.getLocation()).isEqualTo("Casablanca");
+}
+
+@Test
+void adminCanUpdateJobWithValidData() throws Exception {
+    Fixture fixture = createFixture();
+
+    String requestBody = """
+            {
+              "title": "Updated Software Engineer",
+              "description": "Updated job description",
+              "location": "Casablanca",
+              "employmentType": "FULL_TIME"
+            }
+            """;
+
+    mockMvc.perform(put(
+                    "/api/admin/jobs/{jobId}",
+                    fixture.job().getId())
+                    .with(jwtFor(fixture.admin()))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.title")
+                    .value("Updated Software Engineer"))
+            .andExpect(jsonPath("$.description")
+                    .value("Updated job description"))
+            .andExpect(jsonPath("$.location").value("Casablanca"))
+            .andExpect(jsonPath("$.employmentType").value("FULL_TIME"));
+
+    Job updatedJob = jobRepository.findById(fixture.job().getId())
+            .orElseThrow();
+
+    assertThat(updatedJob.getTitle())
+            .isEqualTo("Updated Software Engineer");
+    assertThat(updatedJob.getDescription())
+            .isEqualTo("Updated job description");
+    assertThat(updatedJob.getLocation()).isEqualTo("Casablanca");
+    assertThat(updatedJob.getEmploymentType())
+            .isEqualTo(EmploymentType.FULL_TIME);
+}
+
+@Test
+void adminCanUpdateApplicationStatusAndRecordsHistory() throws Exception {
+    Fixture fixture = createFixture();
+
+    mockMvc.perform(patch(
+                    "/api/admin/applications/{applicationId}/status",
+                    fixture.application().getId())
+                    .param("status", "REVIEWING")
+                    .with(jwtFor(fixture.admin())))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id")
+                    .value(fixture.application().getId()))
+            .andExpect(jsonPath("$.status").value("REVIEWING"));
+
+    Application updatedApplication = applicationRepository
+            .findById(fixture.application().getId())
+            .orElseThrow();
+
+    assertThat(updatedApplication.getStatus())
+            .isEqualTo(ApplicationStatus.REVIEWING);
+
+    var history = statusHistoryRepository
+            .findByApplicationIdOrderByChangedAtAscIdAsc(
+                    fixture.application().getId());
+
+    assertThat(history)
+            .anySatisfy(event -> {
+                assertThat(event.getStatus())
+                        .isEqualTo(ApplicationStatus.REVIEWING);
+                assertThat(event.getChangedBy().getId())
+                        .isEqualTo(fixture.admin().getId());
+                assertThat(event.getEventType().name())
+                        .isEqualTo("TRANSITION");
+            });
+}
+
+@Test
+void adminCanUpdateInterviewStatus() throws Exception {
+    Fixture fixture = createFixture();
+
+    mockMvc.perform(patch(
+                    "/api/admin/interviews/{interviewId}/status",
+                    fixture.interview().getId())
+                    .param("status", "COMPLETED")
+                    .with(jwtFor(fixture.admin())))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id")
+                    .value(fixture.interview().getId()))
+            .andExpect(jsonPath("$.status").value("COMPLETED"));
+
+    Interview updatedInterview = interviewRepository
+            .findById(fixture.interview().getId())
+            .orElseThrow();
+
+    assertThat(updatedInterview.getStatus())
+            .isEqualTo(InterviewStatus.COMPLETED);
+}
+
+@Test
+void adminCannotSetApplicationStatusToWithdrawn() throws Exception {
+    Fixture fixture = createFixture();
+
+    mockMvc.perform(patch(
+                    "/api/admin/applications/{applicationId}/status",
+                    fixture.application().getId())
+                    .param("status", "WITHDRAWN")
+                    .with(jwtFor(fixture.admin())))
+            .andExpect(status().isBadRequest());
+
+    Application unchangedApplication = applicationRepository
+            .findById(fixture.application().getId())
+            .orElseThrow();
+
+    assertThat(unchangedApplication.getStatus())
+            .isEqualTo(ApplicationStatus.APPLIED);
+
+    var history = statusHistoryRepository
+            .findByApplicationIdOrderByChangedAtAscIdAsc(
+                    fixture.application().getId());
+
+    assertThat(history)
+            .noneMatch(event ->
+                    event.getStatus() == ApplicationStatus.WITHDRAWN);
+}
+
+@Test
+void adminCannotReactivateWithdrawnApplication() throws Exception {
+    Fixture fixture = createFixture();
+
+    Application application = applicationRepository
+            .findById(fixture.application().getId())
+            .orElseThrow();
+
+    application.setStatus(ApplicationStatus.WITHDRAWN);
+    applicationRepository.saveAndFlush(application);
+
+    mockMvc.perform(patch(
+                    "/api/admin/applications/{applicationId}/status",
+                    fixture.application().getId())
+                    .param("status", "REVIEWING")
+                    .with(jwtFor(fixture.admin())))
+            .andExpect(status().isConflict());
+
+    Application unchangedApplication = applicationRepository
+            .findById(fixture.application().getId())
+            .orElseThrow();
+
+    assertThat(unchangedApplication.getStatus())
+            .isEqualTo(ApplicationStatus.WITHDRAWN);
+
+    var history = statusHistoryRepository
+            .findByApplicationIdOrderByChangedAtAscIdAsc(
+                    fixture.application().getId());
+
+    assertThat(history)
+            .noneMatch(event ->
+                    event.getStatus() == ApplicationStatus.REVIEWING);
+}
+
+@Test
+void adminCanDownloadApplicationCvAsPdf() throws Exception {
+    Fixture fixture = createFixture();
+
+    byte[] pdfBytes = "%PDF-1.4\nJobFlow test CV\n"
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+    java.nio.file.Path cvPath =
+            java.nio.file.Files.createTempFile(
+                    "jobflow-admin-cv-", ".pdf");
+
+    try {
+        java.nio.file.Files.write(cvPath, pdfBytes);
+
+        Application application = applicationRepository
+                .findById(fixture.application().getId())
+                .orElseThrow();
+
+        application.setCvFileName("candidate-resume.pdf");
+        application.setCvFilePath(cvPath.toString());
+        applicationRepository.saveAndFlush(application);
+
+        mockMvc.perform(get(
+                        "/api/admin/applications/{applicationId}/cv",
+                        fixture.application().getId())
+                        .with(jwtFor(fixture.admin())))
+                .andExpect(status().isOk())
+                .andExpect(content()
+                        .contentType(MediaType.APPLICATION_PDF))
+                .andExpect(header().string(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        "inline; filename=\"candidate-resume.pdf\""))
+                .andExpect(content().bytes(pdfBytes));
+    } finally {
+        java.nio.file.Files.deleteIfExists(cvPath);
+    }
+}
+
+@Test
+void adminGetsBadRequestWhenApplicationCvFileIsMissing()
+        throws Exception {
+    Fixture fixture = createFixture();
+
+    java.nio.file.Path missingCvPath =
+            java.nio.file.Files.createTempFile(
+                    "jobflow-missing-cv-", ".pdf");
+
+    java.nio.file.Files.deleteIfExists(missingCvPath);
+
+    Application application = applicationRepository
+            .findById(fixture.application().getId())
+            .orElseThrow();
+
+    application.setCvFileName("missing-resume.pdf");
+    application.setCvFilePath(missingCvPath.toString());
+    applicationRepository.saveAndFlush(application);
+
+    mockMvc.perform(get(
+                    "/api/admin/applications/{applicationId}/cv",
+                    fixture.application().getId())
+                    .with(jwtFor(fixture.admin())))
+            .andExpect(status().isBadRequest());
+}
+
+@Test
+void adminGetsNotFoundWhenApplicationCvDoesNotExist()
+        throws Exception {
+    Fixture fixture = createFixture();
+
+    mockMvc.perform(get(
+                    "/api/admin/applications/{applicationId}/cv",
+                    Long.MAX_VALUE)
+                    .with(jwtFor(fixture.admin())))
+            .andExpect(status().isNotFound());
+}
+
+@Test
+void adminCanDownloadCandidateProfileCvAsPdf() throws Exception {
+    Fixture fixture = createFixture();
+
+    byte[] pdfBytes = "%PDF-1.4\nJobFlow candidate profile CV\n"
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+    java.nio.file.Path cvPath =
+            java.nio.file.Files.createTempFile(
+                    "jobflow-candidate-cv-", ".pdf");
+
+    try {
+        java.nio.file.Files.write(cvPath, pdfBytes);
+
+        CandidateProfile profile = new CandidateProfile();
+        profile.setUser(fixture.candidate());
+        profile.setCvFileName("candidate-profile-resume.pdf");
+        profile.setCvFilePath(cvPath.toString());
+
+        candidateProfileRepository.saveAndFlush(profile);
+
+        mockMvc.perform(get(
+                        "/api/admin/candidates/{userId}/cv",
+                        fixture.candidate().getId())
+                        .with(jwtFor(fixture.admin())))
+                .andExpect(status().isOk())
+                .andExpect(content()
+                        .contentType(MediaType.APPLICATION_PDF))
+                .andExpect(header().string(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        "inline; filename=\"candidate-profile-resume.pdf\""))
+                .andExpect(content().bytes(pdfBytes));
+    } finally {
+        java.nio.file.Files.deleteIfExists(cvPath);
+    }
+}
+
+@Test
+void adminGetsBadRequestWhenCandidateProfileHasNoCv()
+        throws Exception {
+    Fixture fixture = createFixture();
+
+    CandidateProfile profile = new CandidateProfile();
+    profile.setUser(fixture.candidate());
+
+    candidateProfileRepository.saveAndFlush(profile);
+
+    mockMvc.perform(get(
+                    "/api/admin/candidates/{userId}/cv",
+                    fixture.candidate().getId())
+                    .with(jwtFor(fixture.admin())))
+            .andExpect(status().isBadRequest());
 }
 
     private Fixture createFixture() {
