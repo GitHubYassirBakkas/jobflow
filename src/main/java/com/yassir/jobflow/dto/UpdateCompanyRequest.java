@@ -20,8 +20,8 @@ public class UpdateCompanyRequest {
     private String description;
 
     @Pattern(
-        regexp = "(?i)^(https?://\\S+)?$",
-        message = "Website must be an HTTP or HTTPS URL"
+        regexp = "(?i)^(https?://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}(?::\\d{1,5})?(?:[/?#][^\\s]*)?)?$",
+        message = "Website must be a valid HTTP or HTTPS URL"
     )
     private String website;
 

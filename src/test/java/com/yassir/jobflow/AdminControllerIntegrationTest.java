@@ -419,8 +419,33 @@ void adminCompanyUpdateRejectsJavascriptWebsite() throws Exception {
                     .content(requestBody))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.website")
-                    .value("Website must be an HTTP or HTTPS URL"));
+                    .value("Website must be a valid HTTP or HTTPS URL"));
 }
+
+    @Test
+    void adminCompanyUpdateRejectsIncompleteHttpsWebsite()            throws Exception {
+
+        Fixture fixture = createFixture();
+
+        String requestBody = """
+                {
+                  "name": "Updated company",
+                  "description": "Valid description",
+                  "website": "https://",
+                  "location": "Remote"
+                }
+                """;
+
+        mockMvc.perform(put(
+                        "/api/admin/companies/{companyId}",
+                        fixture.company().getId())
+                        .with(jwtFor(fixture.admin()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.website")
+                        .value("Website must be a valid HTTP or HTTPS URL"));
+    }
 
 @Test
 void adminCompanyUpdateRejectsNameLongerThan255Characters()
