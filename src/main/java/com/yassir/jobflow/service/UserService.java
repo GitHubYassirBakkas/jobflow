@@ -16,6 +16,7 @@ import org.hibernate.exception.ConstraintViolationException;
 
 import java.util.List;
 import java.util.Optional;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class UserService {
@@ -101,33 +102,41 @@ public class UserService {
     return user;
 }
 
+@Transactional
 public User updateUserEnabled(
         Long userId,
         boolean enabled,
         Long currentAdminId) {
 
+    List<User> lockedEnabledAdmins = List.of();
+
+    if (!enabled) {
+        lockedEnabledAdmins =
+                userRepository.findEnabledUsersByRoleForUpdate(Role.ADMIN);
+    }
+
     User user = userRepository.findById(userId)
-        .orElseThrow(() ->
-                new ResourceNotFoundException("User not found")
+            .orElseThrow(() ->
+                    new ResourceNotFoundException("User not found")
+            );
+
+    if (user.getRole() == Role.ADMIN
+            && !enabled
+            && lockedEnabledAdmins.size() <= 1) {
+
+        throw new IllegalArgumentException(
+                "You cannot disable the last active admin"
         );
+    }
 
-   if (user.getRole() == Role.ADMIN
-        && !enabled
-        && userRepository.countByRoleAndEnabledTrue(Role.ADMIN) <= 1) {
+    if (user.getId().equals(currentAdminId) && !enabled) {
+        throw new IllegalArgumentException(
+                "You cannot disable your own account"
+        );
+    }
 
-    throw new IllegalArgumentException(
-            "You cannot disable the last active admin"
-    );
-}
+    user.setEnabled(enabled);
 
-if (user.getId().equals(currentAdminId) && !enabled) {
-    throw new IllegalArgumentException(
-            "You cannot disable your own account"
-    );
-}
-
-user.setEnabled(enabled);
-
-return userRepository.save(user);
+    return userRepository.save(user);
 }
 }

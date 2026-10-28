@@ -49,6 +49,22 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import org.springframework.test.web.servlet.ResultMatcher;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+
+import com.yassir.jobflow.service.UserService;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -83,6 +99,12 @@ class AdminControllerIntegrationTest extends PostgresContainerTest {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private UserService userService;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @BeforeEach
     @AfterEach
@@ -347,6 +369,126 @@ void adminCannotDisableTheOnlyActiveAdmin() throws Exception {
             .orElseThrow();
 
     assertThat(admin.isEnabled()).isTrue();
+}
+
+@Test
+void concurrentDisableRequestsCannotDisableBothActiveAdmins()
+        throws Exception {
+
+    Fixture fixture = createFixture();
+
+    User secondAdmin = saveUser(Role.ADMIN, true);
+
+    Long firstAdminId = fixture.admin().getId();
+    Long secondAdminId = secondAdmin.getId();
+
+    CountDownLatch firstAdminDisabled = new CountDownLatch(1);
+    CountDownLatch allowFirstTransactionToCommit = new CountDownLatch(1);
+    CountDownLatch secondRequestStarted = new CountDownLatch(1);
+
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+
+    Future<?> firstRequest = executor.submit(() -> {
+        TransactionTemplate transaction =
+                new TransactionTemplate(transactionManager);
+
+        transaction.executeWithoutResult(status -> {
+            // This transaction disables the first admin but stays open.
+            userService.updateUserEnabled(
+                    firstAdminId,
+                    false,
+                    secondAdminId
+            );
+
+            firstAdminDisabled.countDown();
+
+            try {
+                if (!allowFirstTransactionToCommit.await(
+                        10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException(
+                            "Timed out waiting to commit the first transaction"
+                    );
+                }
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(exception);
+            }
+        });
+    });
+
+    Future<?> secondRequest = executor.submit(() -> {
+        try {
+            if (!firstAdminDisabled.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException(
+                        "The first admin was not disabled in time"
+                );
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(exception);
+        }
+
+        secondRequestStarted.countDown();
+
+        // This request must wait for the first transaction's row locks.
+        return userService.updateUserEnabled(
+                secondAdminId,
+                false,
+                firstAdminId
+        );
+    });
+
+    try {
+        assertThat(firstAdminDisabled.await(
+                5, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(secondRequestStarted.await(
+                5, TimeUnit.SECONDS)).isTrue();
+
+        // The second request should still be blocked by the first transaction.
+        assertThatThrownBy(() ->
+                secondRequest.get(300, TimeUnit.MILLISECONDS)
+        ).isInstanceOf(TimeoutException.class);
+
+    } finally {
+        // Always release the first transaction, even if an assertion fails.
+        allowFirstTransactionToCommit.countDown();
+
+        executor.shutdown();
+
+        if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
+            executor.shutdownNow();
+            assertThat(
+                    executor.awaitTermination(5, TimeUnit.SECONDS)
+            ).isTrue();
+        }
+    }
+
+    firstRequest.get(5, TimeUnit.SECONDS);
+
+    assertThatThrownBy(() ->
+            secondRequest.get(5, TimeUnit.SECONDS)
+    ).isInstanceOf(ExecutionException.class)
+     .satisfies(exception ->
+            assertThat(exception.getCause())
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage(
+                            "You cannot disable the last active admin"
+                    )
+     );
+
+    User firstAdmin = userRepository.findById(firstAdminId)
+            .orElseThrow();
+
+    User remainingAdmin = userRepository.findById(secondAdminId)
+            .orElseThrow();
+
+    assertThat(firstAdmin.isEnabled()).isFalse();
+    assertThat(remainingAdmin.isEnabled()).isTrue();
+
+    assertThat(
+            userRepository.countByRoleAndEnabledTrue(Role.ADMIN)
+    ).isEqualTo(1);
 }
 
 @Test
